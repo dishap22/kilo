@@ -5,7 +5,10 @@
 #include <stdio.h> // printf(), perror()
 #include <stdlib.h> // atexit(), exit()
 #include <termios.h> // struct termios, tcgetattr(), tcsetattr(), ECHO, TCSAFLUSH, ICANON, ISIG, IXON, IEXTEN, ICRNL, OPOST, BRKINT, INPCK, ISTRIP, CS8, VMIN, VTIME
-#include <unistd.h> // read(), STDIN_FILENO
+#include <unistd.h> // read(), STDIN_FILENO, write(), STDOUT_FILENO
+
+/*** defines ***/
+#define CTRL_KEY(k) ((k) & 0x1f)
 
 /*** data ***/
 
@@ -15,6 +18,9 @@ struct termios orig_termios; // store original attributes
 
 void die(const char *s)
 {
+  write(STDOUT_FILENO, "\x1b[2J", 4);
+  write(STDOUT_FILENO, "\x1b[H", 3);
+
   perror(s);
   exit(1);
 }
@@ -38,7 +44,7 @@ void enableRawMode()
   // ICRNL leads to any carriage return (Ctrl+M) being convered into newline characters. Disabling this. CR = Carriage Return, NL = Newline.
   // When BRKINT is turned on, a break condition will cause a SIGINT singal to be sent to the program (like Ctrl+C)
   // INPCK enables parity checking (irrelevant for modern terminal emulators, kept for convention)
-  // ISTRIP causes 8th bit of input byte to be stripped (likely already off, toggled here for convetion)
+  // ISTRIP causes 8th bit of input byte to be stripped (likely already off, toggled here for convention)
 
   raw.c_oflag &= (OPOST);
   // Default terminal converts "\n" to "\r\n". Disabling this output processing.
@@ -62,6 +68,53 @@ void enableRawMode()
   if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) die("tcsetattr"); // apply changes
 }
 
+char editorReadKey()
+{
+  int nread;
+  char c;
+  while ((nread = read(STDIN_FILENO, &c, 1)) != 1)
+  {
+    if (nread == -1 && errno != EAGAIN) die("read");
+  }
+  return c;
+}
+
+/*** output ***/
+
+void editorRefreshScreen()
+{
+  write(STDOUT_FILENO, "\x1b[2J", 4); 
+  // 4 means writing 4 bytes out to terminal
+  // byte 1: \x1b (escape character, or 27 in decimal)
+  // other 3 bytes: [2J
+  // Escape sequences always begin as \x1b[
+  // J command clears the screen
+  // 2 is an argument to the escape sequence, comes before the actual command.
+  // <esc>[1J = clear screen up to where cursor is
+  // <esc>[0J = clear screen from cursor to end - this is also the default argument so <es>[J has the same effect
+  // <esc>[2J = clear the entire screen
+  write(STDOUT_FILENO, "\x1b[H", 3);
+  // position cursor 
+  // by default, row col args are 1 so this has same effect as <esc>[1;1H
+  // can modify to move cursor to other areas
+}
+
+/*** input ***/
+
+void editorProcessKeypress()
+{
+  char c = editorReadKey();
+
+  switch(c)
+  {
+    case CTRL_KEY('q'):
+      write(STDOUT_FILENO, "\x1b[2J", 4);
+      write(STDOUT_FILENO, "\x1b[H", 3);
+      exit(0);
+      break;
+  }
+}
+
 /*** init ***/
 
 int main() 
@@ -70,17 +123,8 @@ int main()
 
   while(1) //reads input character by character till q is pressed
   {
-    char c = '\0';
-    if (read(STDIN_FILENO, &c, 1) == -1 && errno != EAGAIN) die("read");
-    if (iscntrl(c)) // checks if a character is a non-printable control character
-    {
-      printf("%d\r\n", c);
-    }
-    else
-    {
-      printf("%d ('%c')\r\n", c, c);
-    }
-    if (c == 'q') break;
+    editorRefreshScreen();
+    editorProcessKeypress();
   }
   return 0;
 }
