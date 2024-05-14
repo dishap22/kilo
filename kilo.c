@@ -4,6 +4,7 @@
 #include <errno.h> // errno, EAGAIN
 #include <stdio.h> // printf(), perror()
 #include <stdlib.h> // atexit(), exit()
+#include <sys/ioctl.h>
 #include <termios.h> // struct termios, tcgetattr(), tcsetattr(), ECHO, TCSAFLUSH, ICANON, ISIG, IXON, IEXTEN, ICRNL, OPOST, BRKINT, INPCK, ISTRIP, CS8, VMIN, VTIME
 #include <unistd.h> // read(), STDIN_FILENO, write(), STDOUT_FILENO
 
@@ -11,8 +12,14 @@
 #define CTRL_KEY(k) ((k) & 0x1f)
 
 /*** data ***/
+struct editorConfig 
+{
+  int screenrows;
+  int screencols;
+  struct termios orig_termios; // store original attributes
+};
 
-struct termios orig_termios; // store original attributes
+struct editorConfig E;
 
 /*** terminal ***/
 
@@ -28,15 +35,15 @@ void die(const char *s)
 void disableRawMode() 
 {
   // reset to original settings
-  if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios) == -1) die("tcsetattr"); 
+  if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &E.orig_termios) == -1) die("tcsetattr"); 
 }
 
 void enableRawMode() 
 {
-  if (tcgetattr(STDIN_FILENO, &orig_termios) == -1) die("tcgetattr"); // get original settings
+  if (tcgetattr(STDIN_FILENO, &E.orig_termios) == -1) die("tcgetattr"); // get original settings
   atexit(disableRawMode); 
  
-  struct termios raw = orig_termios; // copy to current settings
+  struct termios raw = E.orig_termios; // copy to current settings
   raw.c_iflag &= ~(BRKINT| ICRNL | INPCK | ISTRIP | IXON);
   // Ctrl+S stops data from being transmitted to terminal, produces XOFF control character
   // Ctrl+Q resumes data transmission, produces XON control character
@@ -79,7 +86,29 @@ char editorReadKey()
   return c;
 }
 
+int getWindowSize(int *rows, int *cols)
+{
+  struct winsize ws;
+
+  if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) return -1;
+  else
+  {
+    *cols = ws.ws_col;
+    *rows = ws.ws_row;
+    return 0;
+  }
+}
+
 /*** output ***/
+
+void editorDrawRows()
+{
+  int y;
+  for (y = 0; y < E.screenrows; y++)
+  {
+    write(STDOUT_FILENO, "~\r\n", 3);
+  }
+}
 
 void editorRefreshScreen()
 {
@@ -97,6 +126,9 @@ void editorRefreshScreen()
   // position cursor 
   // by default, row col args are 1 so this has same effect as <esc>[1;1H
   // can modify to move cursor to other areas
+
+  editorDrawRows();
+  write(STDOUT_FILENO, "\x1b[H", 3);
 }
 
 /*** input ***/
@@ -117,9 +149,15 @@ void editorProcessKeypress()
 
 /*** init ***/
 
+void initEditor() 
+{
+  if (getWindowSize(&E.screenrows, &E.screencols) == -1) die("getWindowSize");
+}
+
 int main() 
 {
   enableRawMode();
+  initEditor();
 
   while(1) //reads input character by character till q is pressed
   {
