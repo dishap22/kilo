@@ -3,7 +3,8 @@
 #include <ctype.h> // iscntrl()
 #include <errno.h> // errno, EAGAIN
 #include <stdio.h> // printf(), perror()
-#include <stdlib.h> // atexit(), exit()
+#include <stdlib.h> // atexit(), exit(), realloc(), free()
+#include <string.h> // memcpy()
 #include <sys/ioctl.h> // ioctl(), TIOCGWINSZ, struct winsize
 #include <termios.h> // struct termios, tcgetattr(), tcsetattr(), ECHO, TCSAFLUSH, ICANON, ISIG, IXON, IEXTEN, ICRNL, OPOST, BRKINT, INPCK, ISTRIP, CS8, VMIN, VTIME
 #include <unistd.h> // read(), STDIN_FILENO, write(), STDOUT_FILENO
@@ -121,23 +122,50 @@ int getWindowSize(int *rows, int *cols)
   }
 }
 
+/*** append buffer ***/
+
+struct abuf {
+  char *b;
+  int len;
+};
+
+#define ABUF_INIT {NULL, 0}
+
+void abAppend(struct abuf *ab, const char *s, int len)
+{
+  char *new = realloc(ab -> b, ab -> len + len);
+
+  if (new == NULL) return;
+  memcpy(&new[ab -> len], s, len);
+  ab -> b = new;
+  ab -> len += len;
+}
+
+void abFree(struct abuf *ab)
+{
+  free (ab -> b);
+}
+
 /*** output ***/
 
-void editorDrawRows()
+void editorDrawRows(struct abuf *ab)
 {
   int y;
   for (y = 0; y < E.screenrows; y++)
   {
-    write(STDOUT_FILENO, "~", 1);
+    abAppend(ab, "~", 1);
+
     if (y < E.screenrows - 1) {
-      write(STDOUT_FILENO, "\r\n", 2);
+      abAppend(ab, "\r\n", 2);
     }
   }
 }
 
 void editorRefreshScreen()
 {
-  write(STDOUT_FILENO, "\x1b[2J", 4); 
+  struct abuf ab = ABUF_INIT;
+  abAppend(&ab, "\x1b[?25l", 6); // hide cursor before printing
+  abAppend(&ab, "\x1b[2J", 4);
   // 4 means writing 4 bytes out to terminal
   // byte 1: \x1b (escape character, or 27 in decimal)
   // other 3 bytes: [2J
@@ -147,13 +175,16 @@ void editorRefreshScreen()
   // <esc>[1J = clear screen up to where cursor is
   // <esc>[0J = clear screen from cursor to end - this is also the default argument so <es>[J has the same effect
   // <esc>[2J = clear the entire screen
-  write(STDOUT_FILENO, "\x1b[H", 3);
+  abAppend(&ab, "\x1b[H", 3);
   // position cursor 
   // by default, row col args are 1 so this has same effect as <esc>[1;1H
   // can modify to move cursor to other areas
 
-  editorDrawRows();
-  write(STDOUT_FILENO, "\x1b[H", 3);
+  editorDrawRows(&ab);
+  abAppend(&ab, "\x1b[H", 3);
+  abAppend(&ab, "\x1b[?25h", 6); // show cursor after printing
+  write(STDOUT_FILENO, ab.b, ab.len);
+  abFree(&ab);
 }
 
 /*** input ***/
