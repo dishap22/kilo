@@ -404,7 +404,6 @@ void editorOpen(char *filename) {
   char *line = NULL;
   size_t linecap = 0;
   ssize_t linelen;
-  linelen = getline(&line, &linecap, fp);
 
   while ((linelen = getline(&line, &linecap, fp)) != -1)
   {
@@ -533,7 +532,7 @@ void abFree(struct abuf *ab)
 
 /*** output ***/
 void editorScroll() {
-  E.rx = E.cx;
+  E.rx = 0;
   if (E.cy < E.numrows) {
     E.rx = editorRowCxToRx(&E.row[E.cy], E.cx);
   }
